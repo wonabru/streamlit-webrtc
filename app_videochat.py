@@ -2,6 +2,7 @@ import logging
 import math
 from typing import List
 
+
 try:
     from typing import Literal
 except ImportError:
