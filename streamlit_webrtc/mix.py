@@ -36,7 +36,7 @@ VIDEO_CLOCK_RATE = 90000
 VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)
 
 
-Frame = Union[av.VideoFrame, av.AudioFrame]
+Frame = Union[av.VideoFrame, av.AudioFrame, bytes]
 
 
 class InputQueueItem(NamedTuple):
