@@ -177,7 +177,7 @@ def main():
             mode=WebRtcMode.RECVONLY,
             client_settings=ClientSettings(
                 rtc_configuration={
-                    "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+                    "iceServers": [{"urls": ["stun:stun2.l.google.com:19302"]}]
                 },
                 media_stream_constraints={"video": False, "audio": True},
             ),
