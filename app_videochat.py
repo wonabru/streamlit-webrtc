@@ -183,6 +183,7 @@ def main():
             ),
             source_audio_track=ctx.input_audio_track,
             desired_playing_state=ctx.state.playing,
+	        sendback_audio=False,
         )
 
 

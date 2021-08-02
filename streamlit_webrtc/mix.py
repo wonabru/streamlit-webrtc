@@ -30,9 +30,9 @@ LOGGER = logging.getLogger(__name__)
 
 # Simply widely-used values are chosen here, but without any strict reasons.
 # Ref: https://github.com/aiortc/aiortc/blob/main/src/aiortc/mediastreams.py
-AUDIO_SAMPLE_RATE = 48000
+AUDIO_SAMPLE_RATE = 22050
 AUDIO_TIME_BASE = fractions.Fraction(1, AUDIO_SAMPLE_RATE)
-VIDEO_CLOCK_RATE = 90000
+VIDEO_CLOCK_RATE = 30000
 VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)
 
 
