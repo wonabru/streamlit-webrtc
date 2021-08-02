@@ -236,39 +236,8 @@ class MultiAudioMixer(MixerBase):
 		# if frames[0].samples > 2000:
 		# 	return frames[0]
 		frames = sorted(frames, key=lambda x: x.pts)
-		frame_all = None
-		pts = 0
-		for ind, frame in enumerate(frames[-1:]):
-			rate = frame.rate
-			buf = frame.to_ndarray()
-			data = bytearray(buf)
-			try:
-				data_dec = self.cipher.decrypt(data)
-				buf = np.frombuffer(data_dec, dtype='int8')
-				buf.dtype = 'int16'
-				# self.empty_frame = frm
-				# if frame_all is None:
-				frame_all = buf
-				pts = frame.pts
 
-				frm = av.AudioFrame.from_ndarray(frame_all.reshape((1, -1)), format='s16', layout='stereo')
-				frm.rate = rate
-				frm.pts = pts
-				return frm
-
-				# else:
-				# 	frame_all = np.mean(np.append(frame_all.reshape((1, -1)), buf.reshape((1, -1)), axis=1), axis=0)
-				# 	frame_all = np.int16(frame_all)  # np.append(frame_all, buf, axis=0)
-			except:
-				continue
-
-		# if frame_all is not None:
-		# 	frm = av.AudioFrame.from_ndarray(frame_all.reshape((1, -1)), format='s16', layout='stereo')
-		# 	frm.rate = rate
-		# 	frm.pts = pts
-		# 	return frm
-
-		return self.empty_frame
+		return frames[-1]
 
 
 def main():
@@ -281,12 +250,12 @@ def main():
 			server_state["mix_track"] = create_mix_track(
 				kind="video", mixer_factory=MultiWindowMixer, key="mix"
 			)
-	#
-	# with server_state_lock["mix_audio"]:
-	# 	if "mix_audio" not in server_state:
-	# 		server_state["mix_audio"] = create_mix_track(
-	# 			kind="audio", mixer_factory=MultiAudioMixer, key="mixAudio"
-	# 		)
+
+	with server_state_lock["mix_audio"]:
+	 	if "mix_audio" not in server_state:
+	 		server_state["mix_audio"] = create_mix_track(
+	 			kind="audio", mixer_factory=MultiAudioMixer, key="mixAudio"
+	 		)
 
 	# with server_state_lock["mix_audio_send"]:
 	# 	if "mix_audio_send" not in server_state:
@@ -295,7 +264,7 @@ def main():
 	# 		)
 
 	mix_track = server_state["mix_track"]
-	# mix_audio = server_state["mix_audio"]
+	mix_audio = server_state["mix_audio"]
 	# mix_audio_send = server_state["mix_audio_send"]
 
 	self_ctx_video = webrtc_streamer(
@@ -308,11 +277,12 @@ def main():
 			media_stream_constraints={"video": True, "audio": True},
 		),
 		source_video_track=mix_track,
-		# source_audio_track=mix_audio,
+		source_audio_track=mix_audio,
 		# audio_html_attrs=AudioHTMLAttributes(advanced={'sampleRate': 16000}),
 		# in_recorder_factory=MediaRecorder,
 		# desired_playing_state=True,
 		sendback_audio=False,
+		sendback_video=True,
 	)
 
 	self_process_video = None
@@ -346,10 +316,11 @@ def main():
 			webrtc_contexts.remove(self_ctx_video)
 			server_state["webrtc_contexts"] = webrtc_contexts
 
-		# for ctx in webrtc_contexts:
-		# 	if ctx == self_ctx_video:
-		# 		continue
-		# 	webrtc_contexts.remove(ctx)
+		for ctx in webrtc_contexts:
+			if ctx == self_ctx_video:
+				continue
+			webrtc_contexts.remove(ctx)
+			break
 
 	# Audio streams are transferred in SFU manner
 	# TODO: Create MCU to mix audio streams
@@ -361,13 +332,14 @@ def main():
 			mode=WebRtcMode.RECVONLY,
 			client_settings=ClientSettings(
 				rtc_configuration={
-					"iceServers": [{"urls": ["stun:stun2.l.google.com:19302"]}]
+					"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
 				},
 				media_stream_constraints={"video": False, "audio": True},
 			),
 			source_audio_track=ctx.input_audio_track,
+			# source_video_track=ctx.input_video_track,
 			desired_playing_state=ctx.state.playing,
-			# sendback_audio=False
+			sendback_audio=False
 		)
 
 
