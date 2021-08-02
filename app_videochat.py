@@ -6,7 +6,7 @@ from Crypto.Util.Padding import pad, unpad
 import binascii
 import io
 from binascii import unhexlify
-
+from aiortc.contrib.media import MediaPlayer, MediaRecorder
 
 try:
 	from typing import Literal
@@ -33,24 +33,23 @@ from streamlit_webrtc import (
 	VideoProcessorFactory,
 	MediaRecorderFactory,
 	MediaPlayerFactory,
-	AudioHTMLAttributes
+	AudioHTMLAttributes,
 )
 
 logger = logging.getLogger(__name__)
 
 
 KEY_SIZE = 16
-BEG_AUDIO=bytearray([255, 255, 255])
-KEY = b'0' * KEY_SIZE
+KEY = b'3' * KEY_SIZE
 IV = b'1' * KEY_SIZE
 
 
 def pad32(data):
-
-	n_bytes = len(data)
-	no = int(np.ceil(n_bytes / KEY_SIZE))
-	n32 = no * KEY_SIZE - n_bytes
-	return data + b'0' * n32
+	return pad(data, block_size=KEY_SIZE)
+	# n_bytes = len(data)
+	# no = int(np.ceil(n_bytes / KEY_SIZE))
+	# n32 = no * KEY_SIZE - n_bytes
+	# return data + b'0' * n32
 
 
 class EncryptVideo(VideoProcessorBase):
@@ -97,12 +96,13 @@ class EncryptVideo(VideoProcessorBase):
 			M = cv2.getRotationMatrix2D((cols / 2, rows / 2), frame.time * 45, 1)
 			img = cv2.warpAffine(img, M, (cols, rows))
 
-		buf = bytearray(img)
-		buf = pad32(buf)
-		buf = self.cipher.encrypt(buf)
-		buf = np.frombuffer(buf, dtype='uint8')
-		buf = buf.reshape(img.shape)
-		frame = av.VideoFrame.from_ndarray(buf, format="bgr24")
+		# l = img.shape[0] * img.shape[1] * img.shape[2]
+		# buf = bytearray(img)
+		# buf = pad32(buf)
+		# buf = self.cipher.encrypt(buf)
+		# buf = np.frombuffer(buf[:l], dtype='uint8')
+		# buf = buf.reshape(img.shape)
+		frame = av.VideoFrame.from_ndarray(img, format="bgr24")
 		return frame
 
 	async def recv_queued(self, frames: List[av.VideoFrame]):
@@ -125,65 +125,28 @@ class EncryptAudio(AudioProcessorBase):
 		super(EncryptAudio, self).__init__()
 		self.cipher = AES.new(key=KEY, mode=AES.MODE_CBC, iv=IV)
 
+		self.resampler = av.audio.resampler.AudioResampler(format="s16", layout='mono', rate=22050)
+
 	def recv(self, frame: av.AudioFrame):
-		# return frame
+		# pts = frame.pts
+		#
+		# try:
+		# 	frame.pts = None
+		# 	frame = self.resampler.resample(frame)
+		# except:
+		# 	logger.warning('Resampling was not performed')
+		# frame.pts = pts
 		rate = frame.rate
 		img = frame.to_ndarray()
 		data = bytearray(img)
-		data = pad32(data)  # [:len(data) - len(BEG_AUDIO)])
+		data = pad32(data[::4])  # [:len(data) - len(BEG_AUDIO)])
 		data_dec = self.cipher.encrypt(data)
 
 		buf = np.frombuffer(data_dec, dtype='int8')
 		buf.dtype = 'int16'
 		frm = frame.from_ndarray(buf.reshape((1, -1)))
-		frm.rate = rate
+		frm.rate = rate // 4
 		return frm
-
-	async def recv_queued(self, frames: List[av.AudioFrame]):
-		"""
-		Receives all the frames arrived after the previous recv_queued() call
-		and returns new frames when running in async mode.
-		If not implemented, delegated to the recv() method by default.
-		"""
-		return [self.recv(frames[-1])]
-
-
-class DecryptAudio(AudioProcessorBase):
-
-	def __init__(self) -> None:
-		super().__init__()
-		self.cipher = AES.new(key=KEY, mode=AES.MODE_CBC, iv=IV)
-		_empty = np.zeros((1, 1920), dtype='int16')
-		self.empty_frame = av.AudioFrame.from_ndarray(_empty, layout='stereo', format='s16')
-		self.empty_frame.rate = 48000
-		self.empty_frame.pts = 0
-
-	def recv(self, frame: av.AudioFrame):
-		# img = frame.to_ndarray()
-		# data = bytearray(img)
-		# data_dec = self.cipher.decrypt(data)
-		#
-		# buf = np.frombuffer(data_dec, dtype='int16')
-		# frm = frame.from_ndarray(buf.reshape((1, -1)))
-		# frm.rate = frame.rate
-		# frm.pts = frame.pts
-
-		rate = frame.rate
-		img = frame.to_ndarray()
-		data = bytearray(img)
-		try:
-			data_dec = self.cipher.decrypt(data)
-
-			buf = np.frombuffer(data_dec, dtype='int8')
-			buf.dtype = 'int16'
-			frm = frame.from_ndarray(buf.reshape((1, -1)))
-			frm.rate = rate
-			return frm
-
-		except:
-			return self.empty_frame
-
-		return frame
 
 	async def recv_queued(self, frames: List[av.AudioFrame]):
 		"""
@@ -238,14 +201,17 @@ class MultiWindowMixer(MixerBase):
 			window_y0 = grid_y + window_offset_y
 			window_x1 = window_x0 + window_w
 			window_y1 = window_y0 + window_h
-
-			buf = bytearray(img)
-			buf = self.cipher.decrypt(buf)
-			buf = np.frombuffer(buf, dtype='uint8')
-			try:
-				img = buf.reshape(img.shape)
-			except:
-				continue
+			# l = img.shape[0] * img.shape[1] * img.shape[2]
+			# buf = bytearray(img)
+			# # buf = unpad(buf, block_size=KEY_SIZE)
+			# buf = self.cipher.decrypt(buf)
+			#
+			# buf = np.frombuffer(buf[:l], dtype='uint8')
+			#
+			# try:
+			# 	img = buf.reshape(img.shape)
+			# except:
+			# 	continue
 			buffer[window_y0:window_y1, window_x0:window_x1, :] = cv2.resize(
 				img, (window_w, window_h)
 			)
@@ -255,10 +221,10 @@ class MultiWindowMixer(MixerBase):
 		return new_frame
 
 
-class MultiAudioMixerSend(MixerBase):
+class MultiAudioMixer(MixerBase):
 
 	def __init__(self) -> None:
-		super(MultiAudioMixerSend, self).__init__()
+		super(MultiAudioMixer, self).__init__()
 		self.cipher = AES.new(key=KEY, mode=AES.MODE_CBC, iv=IV)
 		_empty = np.zeros((1, 1920), dtype='int16')
 		self.empty_frame = av.AudioFrame.from_ndarray(_empty, layout='stereo', format='s16')
@@ -305,20 +271,6 @@ class MultiAudioMixerSend(MixerBase):
 		return self.empty_frame
 
 
-class MultiAudioMixer(MultiAudioMixerSend):
-
-	def __init__(self) -> None:
-		super(MultiAudioMixer, self).__init__()
-		self.cipher = AES.new(key=KEY, mode=AES.MODE_CBC, iv=IV)
-		_empty = np.zeros((1, 1920), dtype='int16')
-		self.empty_frame = av.AudioFrame.from_ndarray(_empty, layout='stereo', format='s16')
-		self.empty_frame.rate = 48000
-		self.empty_frame.pts = 0
-
-	# def on_update(self, frames):
-	# 	return frames[-1]
-
-
 def main():
 	with server_state_lock["webrtc_contexts"]:
 		if "webrtc_contexts" not in server_state:
@@ -329,25 +281,25 @@ def main():
 			server_state["mix_track"] = create_mix_track(
 				kind="video", mixer_factory=MultiWindowMixer, key="mix"
 			)
+	#
+	# with server_state_lock["mix_audio"]:
+	# 	if "mix_audio" not in server_state:
+	# 		server_state["mix_audio"] = create_mix_track(
+	# 			kind="audio", mixer_factory=MultiAudioMixer, key="mixAudio"
+	# 		)
 
-	with server_state_lock["mix_audio"]:
-		if "mix_audio" not in server_state:
-			server_state["mix_audio"] = create_mix_track(
-				kind="audio", mixer_factory=MultiAudioMixer, key="mixAudio"
-			)
-
-	with server_state_lock["mix_audio_send"]:
-		if "mix_audio_send" not in server_state:
-			server_state["mix_audio_send"] = create_mix_track(
-				kind="audio", mixer_factory=MultiAudioMixerSend, key="mixAudioSend"
-			)
+	# with server_state_lock["mix_audio_send"]:
+	# 	if "mix_audio_send" not in server_state:
+	# 		server_state["mix_audio_send"] = create_mix_track(
+	# 			kind="audio", mixer_factory=MultiAudioMixerSend, key="mixAudioSend"
+	# 		)
 
 	mix_track = server_state["mix_track"]
-	mix_audio = server_state["mix_audio"]
-	mix_audio_send = server_state["mix_audio_send"]
+	# mix_audio = server_state["mix_audio"]
+	# mix_audio_send = server_state["mix_audio_send"]
 
 	self_ctx_video = webrtc_streamer(
-		key="self_video",
+		key="self",
 		mode=WebRtcMode.SENDRECV,
 		client_settings=ClientSettings(
 			rtc_configuration={
@@ -356,7 +308,9 @@ def main():
 			media_stream_constraints={"video": True, "audio": True},
 		),
 		source_video_track=mix_track,
-		source_audio_track=mix_audio_send,
+		# source_audio_track=mix_audio,
+		# audio_html_attrs=AudioHTMLAttributes(advanced={'sampleRate': 16000}),
+		# in_recorder_factory=MediaRecorder,
 		# desired_playing_state=True,
 		sendback_audio=False,
 	)
@@ -373,66 +327,18 @@ def main():
 			("noop", "cartoon", "edges", "rotate"),
 			key="filter1-type",
 		)
-
-	# self_ctx_audio = webrtc_streamer(
-	# 	key="self_audio",
-	# 	mode=WebRtcMode.SENDONLY,
-	# 	client_settings=ClientSettings(
-	# 		rtc_configuration={
-	# 			"iceServers": [{"urls": ["stun:stun1.l.google.com:19302"]}]
-	# 		},
-	# 		media_stream_constraints={"video": False, "audio": True},
-	# 	),
-	# 	# source_audio_track=mix_track,
-	# 	# desired_playing_state=True,
-	# 	audio_html_attrs=AudioHTMLAttributes(
-	# 		autoPlay=True,
-	# 		controls=True,
-	# 		mediaGroup='back_audio',
-	# 		playsInline=True,
-	# 	),
-	# 	sendback_audio=False,
-	# )
-
-	self_ctx_audio_recv = webrtc_streamer(
-		key="self_audio_recv",
-		mode=WebRtcMode.SENDRECV,
-		client_settings=ClientSettings(
-			rtc_configuration={
-				"iceServers": [{"urls": ["stun:stun1.l.google.com:19302"]}]
-			},
-			media_stream_constraints={"video": False, "audio": True},
-		),
-		source_audio_track=mix_audio,
-		# desired_playing_state=self_ctx_audio.state.playing if self_ctx_audio is not None else None,
-		audio_html_attrs=AudioHTMLAttributes(
-			autoPlay=True,
-			controls=True,
-			mediaGroup='back_audio',
-			playsInline=True,
-		),
-		sendback_audio=False,
-	)
-
-	self_process_audio = None
-	if self_ctx_video.input_audio_track:
-		self_process_audio = create_process_track(
-			input_track=self_ctx_video.input_audio_track,
-			processor_factory=EncryptAudio,
-		)
-		mix_audio_send.add_input_track(self_process_audio)
-
-	# self_process_audio_recv = None
-	# if self_ctx_audio_recv.output_audio_track:
-	# 	self_process_audio_recv = create_process_track(
-	# 		input_track=self_ctx_audio_recv.output_audio_track,
-	# 		processor_factory=DecryptAudio,
+	#
+	# self_process_audio = None
+	# if self_ctx_video.input_audio_track:
+	# 	self_process_audio = create_process_track(
+	# 		input_track=self_ctx_video.input_audio_track,
+	# 		processor_factory=EncryptAudio,
 	# 	)
-	# 	mix_audio.add_input_track(self_process_audio_recv)
+	# 	mix_audio.add_input_track(self_process_audio)
 
 	with server_state_lock["webrtc_contexts"]:
 		webrtc_contexts: List[WebRtcStreamerContext] = server_state["webrtc_contexts"]
-		self_is_playing = self_ctx_video.state.playing and self_process_video
+		self_is_playing = self_ctx_video.state.playing  and self_process_video
 		if self_is_playing and self_ctx_video not in webrtc_contexts:
 			webrtc_contexts.append(self_ctx_video)
 			server_state["webrtc_contexts"] = webrtc_contexts
@@ -440,30 +346,15 @@ def main():
 			webrtc_contexts.remove(self_ctx_video)
 			server_state["webrtc_contexts"] = webrtc_contexts
 
-	# with server_state_lock["webrtc_contexts"]:
-	# 	webrtc_contexts: List[WebRtcStreamerContext] = server_state["webrtc_contexts"]
-	# 	self_is_playing = self_ctx_audio.state.playing and self_process_audio
-	# 	if self_is_playing and self_ctx_audio not in webrtc_contexts:
-	# 		webrtc_contexts.append(self_ctx_audio)
-	# 		server_state["webrtc_contexts"] = webrtc_contexts
-	# 	elif not self_is_playing and self_ctx_audio in webrtc_contexts:
-	# 		webrtc_contexts.remove(self_ctx_audio)
-	# 		server_state["webrtc_contexts"] = webrtc_contexts
-
-	with server_state_lock["webrtc_contexts"]:
-		webrtc_contexts: List[WebRtcStreamerContext] = server_state["webrtc_contexts"]
-		self_is_playing = self_ctx_audio_recv.state.playing and self_process_audio
-		if self_is_playing and self_ctx_audio_recv not in webrtc_contexts:
-			webrtc_contexts.append(self_ctx_audio_recv)
-			server_state["webrtc_contexts"] = webrtc_contexts
-		elif not self_is_playing and self_ctx_audio_recv in webrtc_contexts:
-			webrtc_contexts.remove(self_ctx_audio_recv)
-			server_state["webrtc_contexts"] = webrtc_contexts
+		# for ctx in webrtc_contexts:
+		# 	if ctx == self_ctx_video:
+		# 		continue
+		# 	webrtc_contexts.remove(ctx)
 
 	# Audio streams are transferred in SFU manner
 	# TODO: Create MCU to mix audio streams
 	for ctx in webrtc_contexts:
-		if ctx == self_ctx_video or not ctx.state.playing:
+		if ctx == self_ctx_video or ctx.state.playing is False:
 			continue
 		webrtc_streamer(
 			key=f"sound-{id(ctx)}",
@@ -474,26 +365,16 @@ def main():
 				},
 				media_stream_constraints={"video": False, "audio": True},
 			),
-			# source_audio_track=mix_audio,
-			# input_audio_track=self_ctx_audio,
-			# audio_processor_factory=self_process_audio,
-			source_audio_track=ctx.output_audio_track,
+			source_audio_track=ctx.input_audio_track,
 			desired_playing_state=ctx.state.playing,
-			audio_html_attrs=AudioHTMLAttributes(
-				autoPlay=True,
-				controls=True,
-				mediaGroup='back_audio',
-				playsInline=True,
-			),
-
-			sendback_audio=False
+			# sendback_audio=False
 		)
 
 
 if __name__ == "__main__":
 	import os
 
-	DEBUG = os.environ.get("DEBUG", "false").lower() not in ["false", "no", "0"]
+	DEBUG = os.environ.get("INFO", "false").lower() not in ["false", "no", "0"]
 
 	logging.basicConfig(
 		format="[%(asctime)s] %(levelname)7s from %(name)s in %(pathname)s:%(lineno)d: "
