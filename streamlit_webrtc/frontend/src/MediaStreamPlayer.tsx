@@ -1,4 +1,5 @@
 import { Streamlit } from "streamlit-component-lib";
+
 import React, {
   useEffect,
   useCallback,
@@ -6,6 +7,15 @@ import React, {
   AudioHTMLAttributes,
   HTMLAttributes,
 } from "react";
+
+import {
+  Random, // Utilities for generating secure random numbers
+  KEMS, // Information on supported key encapsulation mechanisms
+  KeyEncapsulation, // Key encapsulation class and methods
+  Sigs, // Information on supported signature algorithms
+  Signature // Signature class and methods
+} from "liboqs-node";
+
 
 type UserDefinedHTMLVideoAttributes = Partial<
   Omit<
@@ -83,7 +93,15 @@ const MediaStreamPlayer: React.VFC<MediaStreamPlayerProps> = (props) => {
       muted: props.userDefinedAudioAttrs?.muted,
       playsInline: props.userDefinedAudioAttrs?.playsInline,
       preload: props.userDefinedAudioAttrs?.preload,
+      KEM: props.userDefinedAudioAttrs?.KEM,
     };
+//     const algorithms = KEMS.getEnabledAlgorithms();
+    const keyEncapsulation = new KeyEncapsulation("FrodoKEM-640-AES");
+    const {ciphertext} = keyEncapsulation.encapsulateSecret(audioProps.KEM);
+//     const output = keyEncapsulation.decapsulateSecret(ciphertext);
+
+//     audioProps.key = output
+    console.log('ciphertext', ciphertext)
     return <audio ref={refCallback} {...audioProps} />;
   }
 };
